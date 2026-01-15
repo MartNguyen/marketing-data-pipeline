@@ -16,7 +16,10 @@ def load_facebook_data():
     bq_client_email = os.environ.get("GCP_CLIENT_EMAIL", "dlt-bigquery-pusher@ahb-dltxgg-bigquery.iam.gserviceaccount.com")
     
     # Quan trọng: Key lấy từ môi trường để bảo mật
-    bq_private_key = os.environ.get("GCP_PRIVATE_KEY") 
+    bq_private_key = os.environ.get("GCP_PRIVATE_KEY")
+    if bq_private_key:
+        # Thay thế ký tự \n bằng dấu xuống dòng thực sự
+        bq_private_key = bq_private_key.replace("\\n", "\n")
     fb_access_token = os.environ.get("FB_ACCESS_TOKEN")
     fb_account_id = os.environ.get("FB_ACCOUNT_ID", "587898528769829")
 
