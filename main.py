@@ -25,8 +25,9 @@ def load_facebook_data():
     fb_account_ids = [x.strip() for x in fb_account_ids_str.split(",") if x.strip()]
 
     # Kiểm tra xem có thiếu Key không
-    if not bq_private_key or not fb_access_token:
-        print("LỖI: Thiếu GCP_PRIVATE_KEY hoặc FB_ACCESS_TOKEN trong biến môi trường.")
+    if not bq_private_key or not fb_access_token or not fb_account_ids:
+        print("LỖI: Thiếu Key, Token hoặc Account ID.")
+        print(f"Debug info: Key={'OK' if bq_private_key else 'Missing'}, Token={'OK' if fb_access_token else 'Missing'}, IDs={fb_account_ids}")
         return
 
     # 2. Thiết lập Credentials cho BigQuery (dlt tự động đọc các biến này)
@@ -43,29 +44,36 @@ def load_facebook_data():
     )
 
     # 4. Cấu hình nguồn 1: Objects (Cấu trúc TK)
-    fb_source = facebook_ads_source(
-        account_id=fb_account_id,
-        access_token=fb_access_token
-    ).with_resources(
-        "campaigns",
-        "ad_sets",
-        "ads",
-        "ad_creatives"
-    )
+    all_sources = []
+    
+    print(f"Tìm thấy {len(fb_account_ids)} tài khoản cần chạy: {fb_account_ids}")
 
-    # 5. Cấu hình nguồn 2: Insights (Số liệu)
-    insights_source = facebook_insights_source(
-        account_id=fb_account_id,
-        access_token=fb_access_token,
-        initial_load_past_days=30, # Để 30 ngày cho nhẹ, load lần đầu có thể tăng lên
-        time_increment_days=1,
-        level="ad",
-        fields=(
-            "campaign_id", "adset_id", "ad_id", 
-            "date_start", "date_stop", 
-            "spend", "impressions", "clicks", "cpc", "cpm", "account_id"
+    # acc_id là biến chạy trong vòng lặp
+    for acc_id in fb_account_ids:
+        print(f"--- Đang cấu hình cho Account ID: {acc_id} ---")
+        
+        # Source 1: Objects
+        # SỬA LỖI Ở ĐÂY: Dùng acc_id (biến vòng lặp) thay vì fb_account_id cũ
+        obj_source = facebook_ads_source(
+            account_id=acc_id, 
+            access_token=fb_access_token
+        ).with_resources("campaigns", "ad_sets", "ads", "ad_creatives")
+        
+        # Source 2: Insights
+        ins_source = facebook_insights_source(
+            account_id=acc_id,
+            access_token=fb_access_token,
+            initial_load_past_days=30, 
+            time_increment_days=1,
+            level="ad",
+            fields=(
+                "campaign_id", "adset_id", "ad_id", 
+                "date_start", "date_stop", 
+                "spend", "impressions", "clicks", "cpc", "cpm", "account_id"
+            )
         )
-    )
+        all_sources.append(obj_source)
+        all_sources.append(ins_source)
 
     # 6. Chạy Pipeline
     if all_sources:
