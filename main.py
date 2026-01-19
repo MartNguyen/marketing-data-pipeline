@@ -21,7 +21,8 @@ def load_facebook_data():
         # Thay thế ký tự \n bằng dấu xuống dòng thực sự
         bq_private_key = bq_private_key.replace("\\n", "\n")
     fb_access_token = os.environ.get("FB_ACCESS_TOKEN")
-    fb_account_id = os.environ.get("FB_ACCOUNT_ID", "587898528769829")
+    fb_account_ids_str = os.environ.get("FB_ACCOUNT_ID", "")
+    fb_account_ids = [x.strip() for x in fb_account_ids_str.split(",") if x.strip()]
 
     # Kiểm tra xem có thiếu Key không
     if not bq_private_key or not fb_access_token:
@@ -62,15 +63,18 @@ def load_facebook_data():
         fields=(
             "campaign_id", "adset_id", "ad_id", 
             "date_start", "date_stop", 
-            "spend", "impressions", "clicks", "cpc", "cpm"
+            "spend", "impressions", "clicks", "cpc", "cpm", "account_id"
         )
     )
 
     # 6. Chạy Pipeline
-    print("--- Đang tải dữ liệu từ Facebook về BigQuery ---")
-    load_info = pipeline.run([fb_source, insights_source])
-    print(load_info)
-    print("--- Hoàn thành ---")
+    if all_sources:
+        print("--- Bắt đầu tải dữ liệu ---")
+        load_info = pipeline.run(all_sources)
+        print(load_info)
+        print("--- Hoàn thành ---")
+    else:
+        print("Không có source nào được tạo.")
 
 if __name__ == "__main__":
     load_facebook_data()
