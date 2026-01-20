@@ -40,7 +40,7 @@ def load_facebook_data():
     pipeline = dlt.pipeline(
         pipeline_name="fb_ads_to_bq",
         destination="bigquery",
-        dataset_name="fb_ads_ahb1_report"
+        dataset_name="fb_ads_ahb1_report_v2"
     )
     
     # Lệnh này sẽ xóa bỏ các gói dữ liệu bị kẹt từ lần chạy lỗi trước
