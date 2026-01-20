@@ -42,7 +42,11 @@ def load_facebook_data():
         destination="bigquery",
         dataset_name="fb_ads_ahb1_report"
     )
-
+    
+    # Lệnh này sẽ xóa bỏ các gói dữ liệu bị kẹt từ lần chạy lỗi trước
+    print("Đang kiểm tra và xóa pending packages...")
+    pipeline.drop_pending_packages()
+    
     # 4. Cấu hình nguồn 1: Objects (Cấu trúc TK)
     all_sources = []
     
