@@ -58,6 +58,11 @@ def load_facebook_data():
             account_id=acc_id, 
             access_token=fb_access_token
         ).with_resources("campaigns", "ad_sets", "ads", "ad_creatives")
+
+        obj_source.resources["campaigns"].apply_hints(write_disposition="merge")
+        obj_source.resources["ad_sets"].apply_hints(write_disposition="merge")
+        obj_source.resources["ads"].apply_hints(write_disposition="merge")
+        obj_source.resources["ad_creatives"].apply_hints(write_disposition="merge")
         
         # Source 2: Insights
         ins_source = facebook_insights_source(
