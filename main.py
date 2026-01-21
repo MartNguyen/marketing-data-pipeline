@@ -76,9 +76,21 @@ def load_facebook_data():
             time_increment_days=1,
             level="ad",
             fields=(
-                "campaign_id", "adset_id", "ad_id", 
-                "date_start", "date_stop", 
-                "spend", "impressions", "clicks", "cpc", "cpm", "account_id"
+                "campaign_id", 
+                "adset_id", 
+                "ad_id", 
+                "date_start",  # Ngày bắt đầu (Dùng để plot timeline)
+                "date_stop",   # Ngày kết thúc
+                "spend", 
+                "impressions", 
+                "clicks", 
+                "cpc", 
+                "cpm", 
+                "account_id",
+                "actions",                        # Chứa video_view (3s views)
+                "video_play_actions",             # Lượt phát (Views trên UI mới)
+                "video_thruplay_watched_actions", # ThruPlay (Xem >15s)
+                "video_p50_watched_actions"
             )
         )
         all_sources.append(obj_source)
