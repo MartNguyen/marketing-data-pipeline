@@ -99,7 +99,7 @@ def load_facebook_data():
     # 6. Chạy Pipeline
     if all_sources:
         print("--- Bắt đầu tải dữ liệu ---")
-        load_info = pipeline.run(all_sources)
+        load_info = pipeline.run(all_sources, write_disposition="replace")
         print(load_info)
         print("--- Hoàn thành ---")
     else:
