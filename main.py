@@ -87,6 +87,7 @@ def load_facebook_data():
                 "cpc", 
                 "cpm", 
                 "account_id",
+                "inline_post_engagement",
                 "actions",                        # Chứa video_view (3s views)
                 "video_play_actions",             # Lượt phát (Views trên UI mới)
                 "video_thruplay_watched_actions", # ThruPlay (Xem >15s)
