@@ -2,9 +2,7 @@ name: Daily Marketing Data Pipeline
 
 on:
   schedule:
-    # Chạy vào 00:00 UTC hàng ngày (tức là 07:00 sáng giờ Việt Nam)
     - cron: '0 0 * * *'
-  # Cho phép bấm nút chạy tay để test ngay lập tức
   workflow_dispatch:
 
 jobs:
@@ -13,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Đã update lên v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Đã update lên v5
         with:
           python-version: '3.10'
 
@@ -26,11 +24,9 @@ jobs:
 
       - name: Run Pipeline Script
         env:
-          # Nạp chìa khóa từ Secrets vào Code
           FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
           FB_ACCOUNT_ID: ${{ secrets.FB_ACCOUNT_ID }}
           GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
-          # Các biến không mật thì hardcode luôn cũng được (hoặc lấy từ secret nếu muốn)
           GCP_PROJECT_ID: "ahb-dltxgg-bigquery"
           GCP_CLIENT_EMAIL: "dlt-bigquery-pusher@ahb-dltxgg-bigquery.iam.gserviceaccount.com"
         run: python main.py
