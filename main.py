@@ -42,6 +42,9 @@ def load_facebook_data():
         destination="bigquery",
         dataset_name="fb_ads_ahb1_report_v2"
     )
+
+    # Ép location theo đúng location của Dataset trên BQ (asia-southeast1)
+    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
     
     # Lệnh này sẽ xóa bỏ các gói dữ liệu bị kẹt từ lần chạy lỗi trước
     print("Đang kiểm tra và xóa pending packages...")
