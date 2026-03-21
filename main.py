@@ -58,20 +58,21 @@ def load_facebook_data():
             res.apply_hints(write_disposition="merge")
         all_sources.append(obj_source)
 
-        # SOURCE 2: MASTER INSIGHTS (Số liệu tổng quát - Level: Ad)
-        # Bảng này dùng để JOIN với Google Ads sau này
+        # SOURCE 2: MASTER INSIGHTS
         master_ins = facebook_insights_source(
             account_id=acc_id,
             access_token=fb_access_token,
-            initial_load_past_days=30, # Chạy hàng ngày lấy 30 ngày gần nhất
+            initial_load_past_days=30,
             time_increment_days=1,
             level="ad",
             fields=("campaign_id", "adset_id", "ad_id", "date_start", "spend", "impressions", "clicks", "account_id")
         )
-        master_ins.resources["va_insights"].table_name = "facebook_insights"
+        # SỬA LỖI: Dùng vòng lặp để đổi tên bảng (An toàn 100%)
+        for res in master_ins.resources.values():
+            res.table_name = "facebook_insights"
         all_sources.append(master_ins)
 
-        # SOURCE 3: BREAKDOWN AGE & GENDER (Bảng riêng để soi nhân khẩu học)
+        # SOURCE 3: BREAKDOWN AGE & GENDER
         age_gender_ins = facebook_insights_source(
             account_id=acc_id,
             access_token=fb_access_token,
@@ -80,8 +81,22 @@ def load_facebook_data():
             level="ad",
             fields=("ad_id", "date_start", "spend", "impressions", "clicks")
         )
-        age_gender_ins.resources["va_insights"].table_name = "insights_age_gender"
+        for res in age_gender_ins.resources.values():
+            res.table_name = "insights_age_gender"
         all_sources.append(age_gender_ins)
+
+        # SOURCE 4: BREAKDOWN REGION
+        region_ins = facebook_insights_source(
+            account_id=acc_id,
+            access_token=fb_access_token,
+            initial_load_past_days=30,
+            breakdowns=("region",),
+            level="ad",
+            fields=("ad_id", "date_start", "spend", "impressions", "clicks")
+        )
+        for res in region_ins.resources.values():
+            res.table_name = "insights_region"
+        all_sources.append(region_ins)
 
         # SOURCE 4: BREAKDOWN REGION (Bảng riêng theo tỉnh thành)
         region_ins = facebook_insights_source(
