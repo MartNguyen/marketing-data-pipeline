@@ -31,7 +31,18 @@ def load_facebook_data():
     all_sources = []
     # Khai báo bộ Fields chuẩn cho mọi bảng Insights để tránh lỗi "Missing fields"
     # Phải có đủ ID để sau này JOIN được với nhau
-    standard_fields = ("campaign_id", "adset_id", "ad_id", "date_start", "spend", "impressions", "clicks", "account_id")
+    standard_fields = (
+                        "campaign_id", 
+                        "adset_id", 
+                        "ad_id", 
+                        "date_start", 
+                        "spend", 
+                        "impressions", 
+                        "clicks", 
+                        "account_id",
+                        "video_play_actions", 
+                        "video_p3s_actions"
+    )
 
     for acc_id in fb_account_ids:
         # Source 1: Objects
