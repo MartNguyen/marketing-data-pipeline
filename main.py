@@ -32,25 +32,22 @@ def run_fb_production():
 
     all_sources = []
     for acc_id in all_account_ids:
-        # Cũ: 450 ngày (2025). Mới: 90 ngày (2026)
         days = 450 if acc_id == old_account_id else 90
         
-        # --- FIX: Đã truyền access_token trực tiếp vào hàm ---
-        
-        # Nguồn 1: Master
-        all_sources.append(facebook_insights_source(
-            account_id=acc_id, access_token=fb_access_token, initial_load_past_days=days, fields=standard_fields
-        ).with_resources("facebook_insights"))
+        # 1. Luồng Master
+        master_source = facebook_insights_source(account_id=acc_id, access_token=fb_access_token, initial_load_past_days=days, fields=standard_fields)
+        master_source.facebook_insights.table_name = "facebook_insights"
+        all_sources.append(master_source)
 
-        # Nguồn 2: Age & Gender
-        all_sources.append(facebook_insights_source(
-            account_id=acc_id, access_token=fb_access_token, initial_load_past_days=days, fields=standard_fields, breakdowns="ads_insights_age_and_gender"
-        ).with_resources("facebook_insights").with_name("insights_age_gender"))
+        # 2. Luồng Age & Gender
+        age_gender_source = facebook_insights_source(account_id=acc_id, access_token=fb_access_token, initial_load_past_days=days, fields=standard_fields, breakdowns="ads_insights_age_and_gender")
+        age_gender_source.facebook_insights.table_name = "insights_age_gender"
+        all_sources.append(age_gender_source)
 
-        # Nguồn 3: Region
-        all_sources.append(facebook_insights_source(
-            account_id=acc_id, access_token=fb_access_token, initial_load_past_days=days, fields=standard_fields, breakdowns="ads_insights_region"
-        ).with_resources("facebook_insights").with_name("insights_region"))
+        # 3. Luồng Region
+        region_source = facebook_insights_source(account_id=acc_id, access_token=fb_access_token, initial_load_past_days=days, fields=standard_fields, breakdowns="ads_insights_region")
+        region_source.facebook_insights.table_name = "insights_region"
+        all_sources.append(region_source)
 
     print(f"--- ĐANG NẠP DỮ LIỆU FULL CHO {len(all_account_ids)} TÀI KHOẢN ---")
     info = pipeline.run(all_sources)
