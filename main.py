@@ -1,49 +1,45 @@
 import dlt
 import os
-import sys
 from facebook_ads import facebook_insights_source
 
-def run_test():
-    # 1. NẠP ĐỒ NGHỀ (Lấy từ GitHub Secrets)
-    bq_project_id = os.environ.get("GCP_PROJECT_ID")
-    bq_client_email = os.environ.get("GCP_CLIENT_EMAIL")
-    bq_private_key = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
-    fb_token = os.environ.get("FB_ACCESS_TOKEN")
-
-    if not bq_private_key or not fb_token:
-        print("LỖI: Thiếu Secret rồi ní ơi, check lại GitHub nhé!")
-        return
-
-    # 2. THIẾT LẬP MÔI TRƯỜNG CHO DLT
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = bq_project_id
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = bq_client_email
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = bq_private_key
+def run_smoke_test():
+    # 1. Credentials (Dùng lại Secret cũ của ní)
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
 
-    # 3. CẤU HÌNH PIPELINE TEST
+    # 2. Pipeline Test (Đổ vào dataset 'fb_ads_media_test' để check số)
     pipeline = dlt.pipeline(
-        pipeline_name="test_video_v3",
+        pipeline_name="media_smoke_test",
         destination="bigquery",
-        dataset_name="fb_ads_test_video" 
+        dataset_name="fb_ads_media_test" 
     )
 
-    # Lấy 1 tài khoản test và 1 ngày duy nhất
-    test_acc_id = '587898528769829' 
+    # 3. Bộ Metrics "Full Đồ Chơi" cho team Media
+    # Bao gồm: Reach, Freq, Video 3s/15s và Interaction (actions)
+    standard_fields = (
+        "campaign_id", "ad_id", "date_start", "spend", "impressions", "clicks",
+        "reach", "frequency", "video_3sec_watched_actions", "video_thruplay_actions", "actions"
+    )
+
+    # 4. Chỉ kéo 1 ngày của 1 tài khoản (587898528769829)
     source = facebook_insights_source(
-        account_id=test_acc_id,
-        access_token=fb_token,
-        initial_load_past_days=1,
+        account_id='587898528769829',
+        access_token=os.environ.get("FB_ACCESS_TOKEN"),
+        initial_load_past_days=1, # Ép lấy 1 ngày cho cực nhanh
         level="ad",
-        fields=(
-            "campaign_id", "adset_id", "ad_id", "date_start", 
-            "spend", "impressions", "clicks", "account_id",
-            "video_play_actions", "video_p3s_actions" 
-        )
+        fields=standard_fields
     )
 
-    # KHAI HỎA
-    info = pipeline.run(source.with_resources("facebook_insights"))
+    # 5. Khai hỏa đồng thời cả Master và Breakdowns
+    # Để kiểm tra xem Age/Gender có bị lỗi khi kéo Reach/Freq không
+    print("Bắt đầu Smoke Test...")
+    info = pipeline.run([
+        source.with_resources("facebook_insights"),
+        source.with_resources("facebook_insights").with_breakdowns("age_and_gender")
+    ])
     print(info)
 
 if __name__ == "__main__":
-    run_test()
+    run_smoke_test()
