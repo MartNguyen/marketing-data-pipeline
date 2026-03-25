@@ -1,8 +1,8 @@
 """
 Module: Meta Ads Discrete Monthly Backfill
-Strategy: Direct SDK Resource Wrapper with Type Casting
+Strategy: Direct SDK Resource Wrapper with Universal Type Casting
 Standard: Agency-Grade Professional Workspace
-Fix: Date to Timestamp conversion for BigQuery compatibility
+Fix: Global Date-to-Timestamp conversion for date_start & date_stop
 """
 
 import dlt
@@ -29,10 +29,15 @@ def fetch_meta_discrete_chunks(account_id, access_token, fields, start_date, end
     insights = account.get_insights(fields=fields, params=params)
     for entry in insights:
         data = dict(entry)
-        # CRITICAL FIX: Convert "YYYY-MM-DD" string to a Python datetime object
-        # dlt will automatically convert this to a BigQuery-ready TIMESTAMP
-        if 'date_start' in data:
-            data['date_start'] = datetime.strptime(data['date_start'], '%Y-%m-%d')
+        
+        # Dứt điểm lỗi Timestamp cho TOÀN BỘ các cột ngày tháng
+        for key in data.keys():
+            if 'date' in key and data[key]:
+                try:
+                    data[key] = datetime.strptime(data[key], '%Y-%m-%d')
+                except (ValueError, TypeError):
+                    continue
+                    
         yield data
 
 def run_discrete_backfill():
@@ -42,9 +47,9 @@ def run_discrete_backfill():
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
 
-    # 2. Pipeline Definition (v4 to avoid cached schema conflicts)
+    # 2. Pipeline Definition (v5 - Sạch sẽ, không xung đột)
     pipeline = dlt.pipeline(
-        pipeline_name="fb_ads_discrete_v4", 
+        pipeline_name="fb_ads_discrete_v5", 
         destination="bigquery",
         dataset_name="fb_ads_ahb1_report_v2"
     )
@@ -55,10 +60,11 @@ def run_discrete_backfill():
     reporting_fields = [
         "account_id", "campaign_id", "campaign_name", 
         "adset_id", "adset_name", "ad_id", "ad_name", 
-        "date_start", "spend", "impressions", "clicks", 
+        "date_start", "date_stop", "spend", "impressions", "clicks", 
         "reach", "frequency"
     ]
 
+    # Giữ nguyên chiến thuật chia khối (Chunking) để né Timeout
     MONTH_CHUNKS = [
         {"start": "2025-01-01", "end": "2025-03-31", "label": "Q1_2025"},
         {"start": "2025-04-01", "end": "2025-06-30", "label": "Q2_2025"},
@@ -68,7 +74,7 @@ def run_discrete_backfill():
     ]
 
     for chunk in MONTH_CHUNKS:
-        logger.info(f"🚀 Processing {chunk['label']} (Target: asia-southeast1)")
+        logger.info(f"🚀 Processing {chunk['label']} (Target: Singapore/asia-southeast1)")
         
         resources = []
         for acc_id in acc_ids:
@@ -83,6 +89,7 @@ def run_discrete_backfill():
             resources.append(res)
 
         try:
+            # Chạy nạp dữ liệu
             info = pipeline.run(resources)
             logger.info(f"✅ Loaded {chunk['label']}: {info}")
         except Exception as e:
