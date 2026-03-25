@@ -1,7 +1,7 @@
 """
-Module: AHB Meta Ads Final Handover (v8.0)
-Standard: Senior Tech Lead Production
-Strategy: Anonymous Pipeline + Sequential Monthly Extraction
+Module: AHB Meta Ads - Stealth Resume (v8.1)
+Standard: Rate-Limit Proof Engineering
+Strategy: 10-day windows + Long Sleep on 403
 """
 
 import dlt
@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
+from facebook_business.exceptions import FacebookRequestError
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -25,57 +26,57 @@ def fetch_meta_breakdowns(account_id, access_token, fields, start_date, end_date
         'time_increment': 1,
         'breakdowns': breakdown
     }
-    insights = account.get_insights(fields=fields, params=params)
-    for entry in insights:
-        data = dict(entry)
-        data['account_id'] = account_id 
-        for key in data.keys():
-            if 'date' in key and data[key]:
-                try: data[key] = datetime.strptime(data[key], '%Y-%m-%d')
-                except: continue
-        yield data
+    
+    # Logic Retry ngay trong generator để không chết pipeline
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            insights = account.get_insights(fields=fields, params=params)
+            for entry in insights:
+                data = dict(entry)
+                data['account_id'] = account_id 
+                for key in data.keys():
+                    if 'date' in key and data[key]:
+                        try: data[key] = datetime.strptime(data[key], '%Y-%m-%d')
+                        except: continue
+                yield data
+            break # Thành công thì thoát vòng lặp retry
+        except FacebookRequestError as e:
+            if e.api_error_code() == 4: # Rate limit
+                wait_time = 300 * (attempt + 1) # Nghỉ 5 phút tăng dần
+                logger.warning(f"⚠️ Meta bóp rồi! Nghỉ {wait_time}s rồi thử lại...")
+                time.sleep(wait_time)
+            else:
+                raise e
 
-def run_master_final_backfill():
-    # 1. ÉP MAPPING SECRETS (Bắt buộc để quay về mode cũ)
+def run_resumed_backfill():
+    # Credentials (giữ nguyên)
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
 
-    # 2. KHÔNG ĐẶT TÊN PIPELINE (Để nó tự nhận diện Secrets ở trên)
     pipeline = dlt.pipeline(destination="bigquery", dataset_name="fb_ads_ahb1_report_v2")
-
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
-    
-    fields = [
-        "account_id", "campaign_id", "campaign_name", 
-        "adset_id", "adset_name", "ad_id", "ad_name", 
-        "date_start", "spend", "impressions", "clicks"
+    fields = ["account_id", "campaign_id", "campaign_name", "adset_id", "adset_name", "ad_id", "ad_name", "date_start", "spend", "impressions", "clicks"]
+
+    # CHỈ CHẠY TỪ THÁNG 5 TRỞ ĐI - Chia nhỏ 10 ngày để Meta không sốc
+    RESUME_WINDOWS = [
+        {"start": "2025-05-01", "end": "2025-05-15"}, {"start": "2025-05-16", "end": "2025-05-31"},
+        {"start": "2025-06-01", "end": "2025-06-30"}, {"start": "2025-07-01", "end": "2025-07-31"},
+        {"start": "2025-08-01", "end": "2025-08-31"}, {"start": "2025-09-01", "end": "2025-09-30"},
+        {"start": "2025-10-01", "end": "2025-10-31"}, {"start": "2025-11-01", "end": "2025-11-30"},
+        {"start": "2025-12-01", "end": "2025-12-31"}, {"start": "2026-01-01", "end": "2026-03-25"}
     ]
 
-    # FULL LIST 15 THÁNG (Đã tối ưu để né 403)
-    FULL_MONTHS = [
-        {"start": "2025-01-01", "end": "2025-01-31"}, {"start": "2025-02-01", "end": "2025-02-28"},
-        {"start": "2025-03-01", "end": "2025-03-31"}, {"start": "2025-04-01", "end": "2025-04-30"},
-        {"start": "2025-05-01", "end": "2025-05-31"}, {"start": "2025-06-01", "end": "2025-06-30"},
-        {"start": "2025-07-01", "end": "2025-07-31"}, {"start": "2025-08-01", "end": "2025-08-31"},
-        {"start": "2025-09-01", "end": "2025-09-30"}, {"start": "2025-10-01", "end": "2025-10-31"},
-        {"start": "2025-11-01", "end": "2025-11-30"}, {"start": "2025-12-01", "end": "2025-12-31"},
-        {"start": "2026-01-01", "end": "2026-01-31"}, {"start": "2026-02-01", "end": "2026-02-28"},
-        {"start": "2026-03-01", "end": "2026-03-25"}
-    ]
-
-    for month in FULL_MONTHS:
-        logger.info(f"🚀 Master Syncing: {month['start']}...")
+    for window in RESUME_WINDOWS:
+        logger.info(f"🚀 Stealth Syncing: {window['start']} to {window['end']}")
         for acc_id in acc_ids:
-            # Age/Gender
-            pipeline.run(fetch_meta_breakdowns(acc_id, token, fields, month['start'], month['end'], ['age', 'gender']), table_name="insights_age_gender")
-            # Region
-            pipeline.run(fetch_meta_breakdowns(acc_id, token, fields, month['start'], month['end'], ['region']), table_name="insights_region")
-            
-            logger.info(f"✅ Acc {acc_id} for {month['start']} LOADED. Sleeping 10s...")
-            time.sleep(10)
+            # Chạy tuần tự Age/Gender rồi tới Region
+            pipeline.run(fetch_meta_breakdowns(acc_id, token, fields, window['start'], window['end'], ['age', 'gender']), table_name="insights_age_gender")
+            pipeline.run(fetch_meta_breakdowns(acc_id, token, fields, window['start'], window['end'], ['region']), table_name="insights_region")
+            time.sleep(15) # Nghỉ 15s giữa các Acc
 
 if __name__ == "__main__":
-    run_master_final_backfill()
+    run_resumed_backfill()
