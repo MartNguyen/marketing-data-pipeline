@@ -1,17 +1,17 @@
 """
 Module: Meta Ads Discrete Monthly Backfill
-Strategy: Direct SDK Resource Wrapper (Non-redundant)
+Strategy: Direct SDK Resource Wrapper with Type Casting
 Standard: Agency-Grade Professional Workspace
-Fix: Regional Location asia-southeast1
+Fix: Date to Timestamp conversion for BigQuery compatibility
 """
 
 import dlt
 import os
 import logging
+from datetime import datetime
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 
-# Professional Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -28,20 +28,23 @@ def fetch_meta_discrete_chunks(account_id, access_token, fields, start_date, end
     
     insights = account.get_insights(fields=fields, params=params)
     for entry in insights:
-        yield dict(entry)
+        data = dict(entry)
+        # CRITICAL FIX: Convert "YYYY-MM-DD" string to a Python datetime object
+        # dlt will automatically convert this to a BigQuery-ready TIMESTAMP
+        if 'date_start' in data:
+            data['date_start'] = datetime.strptime(data['date_start'], '%Y-%m-%d')
+        yield data
 
 def run_discrete_backfill():
-    # 1. Credentials & LOCATION CONFIG (CRITICAL FIX)
+    # 1. Credentials & Regional Configuration
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
-    
-    # ÉP ĐỊA ĐIỂM VỀ SINGAPORE ĐỂ KHỚP VỚI DATASET HIỆN TẠI
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
 
-    # Đổi tên pipeline để dlt bỏ qua các gói cũ bị lỗi US
+    # 2. Pipeline Definition (v4 to avoid cached schema conflicts)
     pipeline = dlt.pipeline(
-        pipeline_name="fb_ads_discrete_v3", 
+        pipeline_name="fb_ads_discrete_v4", 
         destination="bigquery",
         dataset_name="fb_ads_ahb1_report_v2"
     )
@@ -65,7 +68,7 @@ def run_discrete_backfill():
     ]
 
     for chunk in MONTH_CHUNKS:
-        logger.info(f"🚀 Processing {chunk['label']} in asia-southeast1...")
+        logger.info(f"🚀 Processing {chunk['label']} (Target: asia-southeast1)")
         
         resources = []
         for acc_id in acc_ids:
