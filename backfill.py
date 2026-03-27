@@ -29,36 +29,32 @@ def fetch_meta_backfill(account_id, access_token, fields, start_date, end_date):
             data['account_id'] = clean_acc_id
             for key in data.keys():
                 if 'date' in key and data[key]:
-                    try: data[key] = datetime.strptime(data[key], '%Y-%m-%d').date()
+                    try: 
+                        # FIX: Giữ nguyên datetime để khớp với cột TIMESTAMP của BigQuery
+                        data[key] = datetime.strptime(data[key], '%Y-%m-%d')
                     except: continue
             yield data
     except Exception as e:
         logger.error(f"❌ Lỗi Acc {account_id} ({start_date}): {e}")
 
 def run_backfill():
-    # 1. Credentials
+    # 1. Credentials & Config
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     
-    # 🌟 DÒNG QUAN TRỌNG NHẤT: Ép dlt tìm ở Singapore (asia-southeast1)
+    # Ép dlt trỏ đúng Singapore
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1" 
-    
+
     pipeline = dlt.pipeline(
-        pipeline_name="meta_backfill", 
+        pipeline_name="meta_backfill_v2", 
         destination="bigquery", 
         dataset_name="fb_ads_ahb1_report_v2"
     )
     
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
-    
-    # 🌟 Đủ bộ fields ní yêu cầu
-    fields = [
-        "account_id", "campaign_id", "campaign_name", "adset_id", "adset_name", 
-        "ad_id", "ad_name", "date_start", "spend", "impressions", "clicks",
-        "inline_post_engagement", "actions"
-    ]
+    fields = ["account_id", "campaign_id", "campaign_name", "adset_id", "adset_name", "ad_id", "ad_name", "date_start", "spend", "impressions", "clicks", "inline_post_engagement", "actions"]
 
     # 2. Vòng lặp chia tháng (Jan 2025 -> Mar 2026)
     start_point = date(2025, 1, 1)
