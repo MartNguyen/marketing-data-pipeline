@@ -41,7 +41,14 @@ def run_backfill():
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     
-    pipeline = dlt.pipeline(pipeline_name="meta_backfill", destination="bigquery", dataset_name="fb_ads_ahb1_report_v2")
+    # 🌟 DÒNG QUAN TRỌNG NHẤT: Ép dlt tìm ở Singapore (asia-southeast1)
+    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1" 
+    
+    pipeline = dlt.pipeline(
+        pipeline_name="meta_backfill", 
+        destination="bigquery", 
+        dataset_name="fb_ads_ahb1_report_v2"
+    )
     
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
