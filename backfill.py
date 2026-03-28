@@ -1,5 +1,5 @@
 """
-Module: Meta Ads Backfill Pipeline (v6.2 - Ultimate Tiệm Tiến)
+Module: Meta Ads Backfill Pipeline (v6.2.1 - Ultimate Tiệm Tiến - Fixed)
 Standard: Production Ready - Monthly Gap Strategy (Open-ended)
 Feature: Fan-out Prevention, Auto-Parse Video & Engagement Metrics, Historical Isolation
 """
@@ -13,7 +13,7 @@ from dateutil.relativedelta import relativedelta
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 
-# 1. Setup Diagnostic Logging
+# Setup Diagnostic Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,6 @@ def fetch_meta_data(account_id, access_token, fields, start_date, end_date, brea
                 thruplay = 0
                 custom_eng = 0
                 
-                # Quét mảng actions để cộng dồn đúng metric
                 for act in data['actions']:
                     act_type = act.get('action_type', '')
                     val = float(act.get('value', 0))
@@ -63,7 +62,6 @@ def fetch_meta_data(account_id, access_token, fields, start_date, end_date, brea
                     elif act_type in ['post_reaction', 'comment', 'post', 'post_engagement']:
                         custom_eng += val
                         
-                # Tạo cột mới phẳng lỳ cho Looker Studio dễ đọc
                 data['custom_video_view_3s'] = view_3s
                 data['custom_video_thruplay'] = thruplay
                 data['custom_total_engagement'] = custom_eng
@@ -74,7 +72,7 @@ def fetch_meta_data(account_id, access_token, fields, start_date, end_date, brea
         logger.error(f"❌ Error Acc {account_id} | Breakdown {breakdown} | {start_date}: {e}")
 
 def run_backfill_campaign():
-    # 2. Config Hộp Đen (GCP Credentials & Location)
+    # Config GCP & BQ
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
@@ -89,22 +87,19 @@ def run_backfill_campaign():
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
     
-    # 3. Định nghĩa Fields chuẩn
-    # LƯU Ý: Đã nhét 'reach' vào Master. Tuyệt đối KHÔNG SUM(reach) trên Looker Studio.
     fields_master = [
         "account_id", "campaign_id", "campaign_name", "adset_id", "adset_name", 
         "ad_id", "ad_name", "date_start", "spend", "impressions", "clicks", "reach",
         "inline_post_engagement", "actions"
     ]
     
-    # Bảng Breakdown bỏ 'reach' và 'actions' để tránh rác data và sai số nhân khẩu học
     fields_breakdown = [
         "account_id", "ad_id", "date_start", "spend", "impressions", "clicks"
     ]
 
-    # 4. Vòng lặp Chia Tháng (Monthly Gap) - Tự động quét đến hiện tại
+    # Vòng lặp Chia Tháng - Tự động quét đến hiện tại
     start_point = date(2025, 1, 1)
-    end_point = date.today() # Chốt sổ tại ngày bấm chạy Script
+    end_point = date.today()
 
     current_start = start_point
 
@@ -119,29 +114,29 @@ def run_backfill_campaign():
         logger.info(f"🚀 --- Đang cày Block Tháng: {str_start} đến {str_end} ---")
 
         for acc_id in acc_ids:
-            # Luồng 1: Master Data (Bảng Historical)
+            # Luồng 1: Master Data (CÁCH LY VÀO BẢNG BACKFILL) - ĐÃ FIX LỖI ()
             pipeline.run(
-                fetch_meta_data(acc_id, token, fields_master, str_start, str_end)(), 
+                fetch_meta_data(acc_id, token, fields_master, str_start, str_end), 
                 table_name="facebook_insights_backfill_historical",
             )
             
-            # Luồng 2: Age & Gender (Bảng Historical)
+            # Luồng 2: Age & Gender
             pipeline.run(
-                fetch_meta_data(acc_id, token, fields_breakdown, str_start, str_end, ['age', 'gender'])(), 
+                fetch_meta_data(acc_id, token, fields_breakdown, str_start, str_end, ['age', 'gender']), 
                 table_name="insights_age_gender_backfill_historical",
             )
             
-            # Luồng 3: Region (Bảng Historical)
+            # Luồng 3: Region
             pipeline.run(
-                fetch_meta_data(acc_id, token, fields_breakdown, str_start, str_end, ['region'])(), 
+                fetch_meta_data(acc_id, token, fields_breakdown, str_start, str_end, ['region']), 
                 table_name="insights_region_backfill_historical",
             )
             
             logger.info(f"✅ Xong Acc {acc_id} cho tháng {str_start}")
-            time.sleep(2) # Nghỉ hồi API cho Account
+            time.sleep(2)
         
         current_start += relativedelta(months=1)
-        time.sleep(5) # Nghỉ hồi máu cho Node/Runner
+        time.sleep(5)
 
 if __name__ == "__main__":
     run_backfill_campaign()
