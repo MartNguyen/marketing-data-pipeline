@@ -1,7 +1,7 @@
 """
-Module: Meta Ads Daily Sync (v11.0)
-Standard: Production Ready - 7 Days Rolling Window
-Feature: Video Metrics & Granular Engagement Support
+Meta Ads Master Pipeline (v12.0)
+Standard: Production Ready | Star Schema | Automation Friendly
+Logic: Rolling 7-day window | Explicit Mapping | fb_ Prefix
 """
 
 import dlt
@@ -12,95 +12,99 @@ from datetime import datetime, timedelta
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 
-# Setup Logging
+# Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@dlt.resource(name="meta_insights", write_disposition="append")
-def fetch_meta_daily(account_id, access_token, fields, start_date, end_date, breakdown=None):
+@dlt.resource(write_disposition="append")
+def fetch_meta_master(account_id, access_token, start_date, end_date, breakdown=None):
+    """Extract, flatten, and normalize Meta insights."""
     FacebookAdsApi.init(access_token=access_token)
-    # Tự động thêm act_ nếu ní chưa có
     clean_acc_id = str(account_id).replace('act_', '')
     account = AdAccount(f'act_{clean_acc_id}')
+    
+    fields = [
+        "account_id", "campaign_id", "campaign_name", "adset_id", "adset_name", 
+        "ad_id", "ad_name", "date_start", "spend", "impressions", "clicks", 
+        "inline_post_engagement", "actions"
+    ]
     
     params = {
         'time_range': {'since': start_date, 'until': end_date},
         'level': 'ad',
         'time_increment': 1,
+        'breakdowns': breakdown if breakdown else []
     }
-    if breakdown:
-        params['breakdowns'] = breakdown
 
     try:
         insights = account.get_insights(fields=fields, params=params)
         for entry in insights:
-            data = dict(entry)
-            data['account_id'] = clean_acc_id
+            raw = dict(entry)
             
-            # Chuẩn hóa định dạng ngày cho BigQuery
-            for key in data.keys():
-                if 'date' in key and data[key]:
-                    try: 
-                        data[key] = datetime.strptime(data[key], '%Y-%m-%d').date()
-                    except: 
-                        continue
-            yield data
+            # Explicit mapping & fb_ prefixing
+            row = {
+                'fb_account_id': clean_acc_id,
+                'fb_campaign_id': raw.get('campaign_id'),
+                'fb_campaign_name': raw.get('campaign_name'),
+                'fb_adset_id': raw.get('adset_id'),
+                'fb_adset_name': raw.get('adset_name'),
+                'fb_ad_id': raw.get('ad_id'),
+                'fb_ad_name': raw.get('ad_name'),
+                'date': raw.get('date_start'),
+                'age': raw.get('age', 'All'),
+                'gender': raw.get('gender', 'All'),
+                'region': raw.get('region', 'All'),
+                'fb_spend': round(float(raw.get('spend', 0)), 2),
+                'fb_impressions': int(raw.get('impressions', 0)),
+                'fb_clicks': int(raw.get('clicks', 0)),
+                'fb_engagement_total': int(raw.get('inline_post_engagement', 0))
+            }
+
+            # Flatten actions into metrics
+            row.update({'fb_video_3s': 0, 'fb_thruplay_15s': 0, 'fb_engagement_granular': 0})
+            if 'actions' in raw:
+                for act in raw['actions']:
+                    val = int(act.get('value', 0))
+                    a_type = act.get('action_type')
+                    if a_type == 'video_view': row['fb_video_3s'] = val
+                    elif a_type in ['thruplay', 'video_thruplay_watched_actions']: row['fb_thruplay_15s'] = val
+                    elif a_type in ['post_reaction', 'comment', 'post']: row['fb_engagement_granular'] += val
+            
+            yield row
     except Exception as e:
-        logger.error(f"❌ Lỗi khi kéo data từ Acc {account_id}: {e}")
+        logger.error(f"Acc {account_id} Error: {e}")
 
-def run_daily_pipeline():
-    # 1. Config Credentials (GCP)
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
-    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1" # Khu vực Singapore
-
-    pipeline = dlt.pipeline(
-        pipeline_name="meta_to_bigquery",
-        destination="bigquery", 
-        dataset_name="fb_ads_ahb1_report_v2"
-    )
+def run_sync():
+    """Execute pipeline: Master, Demographic, and Geographic layers."""
+    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
     
+    pipeline = dlt.pipeline(
+        pipeline_name="meta_master_v12",
+        destination="bigquery",
+        dataset_name="fb_ads_ahb_master_v3"
+    )
+
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
     
-    # 🌟 FIELDS UPDATE: Thêm actions để lôi Video & Engagement chi tiết
-    fields = [
-        "account_id", "campaign_id", "campaign_name", 
-        "adset_id", "adset_name", "ad_id", "ad_name", 
-        "date_start", "spend", "impressions", "clicks",
-        "inline_post_engagement", # Engagement cũ (số tổng)
-        "actions" # Chứa: video_view (3s), thruplay, post_reaction, comment, post (share)
-    ]
-
-    # 2. Window: 7 ngày gần nhất để đảm bảo data không bị sót
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-    
-    logger.info(f"☀️ Daily Syncing từ {start_date} đến {end_date}...")
 
     for acc_id in acc_ids:
-        # A. Sync Master Data (Bao gồm cả Video & Engagement)
-        info_master = pipeline.run(
-            fetch_meta_daily(acc_id, token, fields, start_date, end_date), 
-            table_name="facebook_insights"
-        )
-        logger.info(f"📊 Master Data: {info_master}")
+        # 1. Master Data
+        pipeline.run(fetch_meta_master(acc_id, token, start_date, end_date), 
+                     table_name="fact_fb_performance")
         
-        # B. Sync Age/Gender (Giữ nguyên để báo cáo nhân khẩu học)
-        pipeline.run(
-            fetch_meta_daily(acc_id, token, fields, start_date, end_date, ['age', 'gender']), 
-            table_name="insights_age_gender"
-        )
+        # 2. Age/Gender Breakdown
+        pipeline.run(fetch_meta_master(acc_id, token, start_date, end_date, ['age', 'gender']), 
+                     table_name="fact_fb_demographic")
         
-        # C. Sync Region (Giữ nguyên để báo cáo địa lý)
-        pipeline.run(
-            fetch_meta_daily(acc_id, token, fields, start_date, end_date, ['region']), 
-            table_name="insights_region"
-        )
+        # 3. Region Breakdown
+        pipeline.run(fetch_meta_master(acc_id, token, start_date, end_date, ['region']), 
+                     table_name="fact_fb_geographic")
         
-        logger.info(f"✅ Acc {acc_id} daily sync hoàn tất.")
-        time.sleep(5) # Tránh bị Meta rate limit
+        logger.info(f"✅ Sync complete: {acc_id}")
+        time.sleep(5)
 
 if __name__ == "__main__":
-    run_daily_pipeline()
+    run_sync()
