@@ -1,17 +1,81 @@
 import dlt
 import os
 import time
+import logging
 from datetime import date
-from main import fetch_meta_ultimate # Đảm bảo file chính của ní tên là main.py
+from facebook_business.api import FacebookAdsApi
+from facebook_business.adobjects.adaccount import AdAccount
+
+# Setup Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdown=None):
+    """Hàm fetch data chuẩn v14.0"""
+    FacebookAdsApi.init(access_token=access_token)
+    acc = AdAccount(f'act_{str(account_id).replace("act_", "")}')
+    fields = [
+        "account_id", "campaign_id", "campaign_name", "objective",
+        "adset_id", "adset_name", "ad_id", "ad_name", 
+        "date_start", "spend", "impressions", "clicks", "reach", "frequency",
+        "inline_post_engagement", "actions"
+    ]
+    params = {
+        'time_range': {'since': start_date, 'until': end_date},
+        'level': 'ad',
+        'time_increment': 1,
+        'breakdowns': breakdown if breakdown else []
+    }
+    try:
+        insights = acc.get_insights(fields=fields, params=params)
+        for entry in insights:
+            raw = dict(entry)
+            row = {
+                'fb_account_id': raw.get('account_id'),
+                'fb_campaign_id': raw.get('campaign_id'),
+                'fb_campaign_name': raw.get('campaign_name'),
+                'fb_objective': raw.get('objective'),
+                'fb_adset_id': raw.get('adset_id'),
+                'fb_adset_name': raw.get('adset_name'),
+                'fb_ad_id': raw.get('ad_id'),
+                'fb_ad_name': raw.get('ad_name'),
+                'date': raw.get('date_start'),
+                'fb_spend': round(float(raw.get('spend', 0)), 2),
+                'fb_impressions': int(raw.get('impressions', 0)),
+                'fb_clicks': int(raw.get('clicks', 0)),
+                'fb_reach': int(raw.get('reach', 0)),
+                'fb_frequency': float(raw.get('frequency', 0)),
+                'fb_eng_total': int(raw.get('inline_post_engagement', 0)),
+                'age': raw.get('age', 'All'),
+                'gender': raw.get('gender', 'All'),
+                'region': raw.get('region', 'All'),
+                'publisher_platform': raw.get('publisher_platform', 'All')
+            }
+            # Reset actions
+            row.update({'fb_video_3s': 0, 'fb_thruplay': 0, 'fb_eng_granular': 0, 
+                        'fb_purchase': 0, 'fb_lead': 0, 'fb_registration': 0})
+            if 'actions' in raw:
+                for act in raw['actions']:
+                    val = int(act.get('value', 0))
+                    a_type = act.get('action_type')
+                    if a_type == 'video_view': row['fb_video_3s'] = val
+                    elif a_type in ['thruplay', 'video_thruplay_watched_actions']: row['fb_thruplay'] = val
+                    elif a_type in ['post_reaction', 'comment', 'post']: row['fb_eng_granular'] += val
+                    elif a_type == 'purchase': row['fb_purchase'] = val
+                    elif a_type == 'lead': row['fb_lead'] = val
+                    elif a_type == 'complete_registration': row['fb_registration'] = val
+            yield row
+    except Exception as e:
+        logger.error(f"Error patching {account_id}: {e}")
 
 def run_patch():
-    # Setup Credentials
+    # Credentials
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     
     pipeline = dlt.pipeline(
-        pipeline_name="meta_patch_v14_1", 
+        pipeline_name="meta_patch_v14_standalone", 
         destination="bigquery", 
         dataset_name="fb_ads_ahb_master_v3"
     )
@@ -19,26 +83,17 @@ def run_patch():
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_id = "587898528769829"
     
-    # Chỉ định đích danh 2 tháng cần vá
-    blocks = [
-        ('2025-07-01', '2025-07-31'),
-        ('2025-10-01', '2025-10-31')
-    ]
+    # Vá tháng 7 và tháng 10
+    blocks = [('2025-07-01', '2025-07-31'), ('2025-10-01', '2025-10-31')]
 
     for s_str, e_str in blocks:
-        print(f"🛠 Đang vá lỗ hổng: {s_str} đến {e_str}")
-        
-        # Luồng 1: Master
+        logger.info(f"🛠 Patching Block: {s_str} to {e_str}")
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str), table_name="fact_fb_performance")
-        # Luồng 2: Demographic
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['age', 'gender']), table_name="fact_fb_demographic")
-        # Luồng 3: Platform
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform']), table_name="fact_fb_platform")
-        # Luồng 4: Geographic
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['region']), table_name="fact_fb_geographic")
-        
-        print(f"✅ Đã vá xong block {s_str}")
-        time.sleep(10) # Nghỉ ngơi lâu hơn để tránh dính 403 lần nữa
+        logger.info(f"✅ Finished patching block {s_str}")
+        time.sleep(15) # Nghỉ sâu để né Rate Limit
 
 if __name__ == "__main__":
     run_patch()
