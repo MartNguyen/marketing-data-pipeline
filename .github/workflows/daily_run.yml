@@ -29,4 +29,4 @@ jobs:
           GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
           GCP_PROJECT_ID: "ahb-dltxgg-bigquery"
           GCP_CLIENT_EMAIL: "dlt-bigquery-pusher@ahb-dltxgg-bigquery.iam.gserviceaccount.com"
-        run: python main.py
+        run: python ad_breakdown.py
