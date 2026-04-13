@@ -76,6 +76,11 @@ def fetch_meta_master(account_id, access_token, start_date, end_date, breakdown=
 
 def run_sync():
     """Execute pipeline: Master, Demographic, and Geographic layers."""
+    
+    # --- QUAN TRỌNG: Re-map Credentials cho dlt ---
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
     
     pipeline = dlt.pipeline(
@@ -105,6 +110,6 @@ def run_sync():
         
         logger.info(f"✅ Sync complete: {acc_id}")
         time.sleep(5)
-
+        
 if __name__ == "__main__":
     run_sync()
