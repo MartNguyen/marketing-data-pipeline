@@ -83,7 +83,7 @@ def run_patch():
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_id = "587898528769829"
     
-    # Vá tháng 7 và tháng 10
+    # Chỉ định vá đích danh tháng 7 và tháng 10/2025
     blocks = [('2025-07-01', '2025-07-31'), ('2025-10-01', '2025-10-31')]
 
     for s_str, e_str in blocks:
@@ -93,7 +93,7 @@ def run_patch():
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform']), table_name="fact_fb_platform")
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['region']), table_name="fact_fb_geographic")
         logger.info(f"✅ Finished patching block {s_str}")
-        time.sleep(15) # Nghỉ sâu để né Rate Limit
+        time.sleep(15) 
 
 if __name__ == "__main__":
     run_patch()
