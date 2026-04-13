@@ -51,7 +51,6 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
                 'region': raw.get('region', 'All'),
                 'publisher_platform': raw.get('publisher_platform', 'All')
             }
-            # Reset actions
             row.update({'fb_video_3s': 0, 'fb_thruplay': 0, 'fb_eng_granular': 0, 
                         'fb_purchase': 0, 'fb_lead': 0, 'fb_registration': 0})
             if 'actions' in raw:
@@ -69,7 +68,10 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
         logger.error(f"Error patching {account_id}: {e}")
 
 def run_patch():
-    # Credentials
+    # --- PHẦN FIX LỖI 404 LOCATION ---
+    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1" # <<-- ÉP VỀ SINGAPORE Ở ĐÂY
+    
+    # Credentials nạp từ ENV
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
@@ -83,11 +85,11 @@ def run_patch():
     token = os.environ.get("FB_ACCESS_TOKEN")
     acc_id = "587898528769829"
     
-    # Chỉ định vá đích danh tháng 7 và tháng 10/2025
     blocks = [('2025-07-01', '2025-07-31'), ('2025-10-01', '2025-10-31')]
 
     for s_str, e_str in blocks:
         logger.info(f"🛠 Patching Block: {s_str} to {e_str}")
+        # DLT sẽ tự động tạo bảng hoặc update schema vào đúng region asia-southeast1
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str), table_name="fact_fb_performance")
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['age', 'gender']), table_name="fact_fb_demographic")
         pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform']), table_name="fact_fb_platform")
