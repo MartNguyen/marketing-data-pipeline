@@ -77,14 +77,15 @@ def fetch_meta_master(account_id, access_token, start_date, end_date, breakdown=
 def run_sync():
     """Execute pipeline: Master, Demographic, and Geographic layers."""
     
-    # --- QUAN TRỌNG: Re-map Credentials cho dlt ---
+    # --- BẮT BUỘC: Map Credentials từ GitHub Secrets vào dlt ---
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
+    # Fix lỗi xuống dòng của Private Key
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
     
     pipeline = dlt.pipeline(
-        pipeline_name="meta_master_v12",
+        pipeline_name="meta_master_v12", # Tên này sẽ map với prefix env nếu có
         destination="bigquery",
         dataset_name="fb_ads_ahb_master_v3"
     )
@@ -96,15 +97,15 @@ def run_sync():
     start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
     for acc_id in acc_ids:
-        # 1. Master Data
+        # Chạy nạp dữ liệu Master
         pipeline.run(fetch_meta_master(acc_id, token, start_date, end_date), 
                      table_name="fact_fb_performance")
         
-        # 2. Age/Gender Breakdown
+        # Chạy nạp dữ liệu Demographic
         pipeline.run(fetch_meta_master(acc_id, token, start_date, end_date, ['age', 'gender']), 
                      table_name="fact_fb_demographic")
         
-        # 3. Region Breakdown
+        # Chạy nạp dữ liệu Geographic
         pipeline.run(fetch_meta_master(acc_id, token, start_date, end_date, ['region']), 
                      table_name="fact_fb_geographic")
         
