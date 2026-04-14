@@ -85,7 +85,14 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
 
 def run_backfill():
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     
+    p_key = os.environ.get("GCP_PRIVATE_KEY", "")
+    if "\\n" in p_key:
+        p_key = p_key.replace("\\n", "\n")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = p_key
+
     pipeline = dlt.pipeline(
         pipeline_name="meta_v15_1_backfill", 
         destination="bigquery", 
