@@ -1,6 +1,6 @@
 """
-Meta Ads Pipeline v15.2 - Schema Resilient
-Fix: Dynamic Primary Keys to avoid BigQuery "Required Field" Error
+Meta Ads Pipeline v15.2 - Credentials & Schema Fixed
+Bản này fix lỗi thiếu Credentials và lỗi Schema BigQuery
 """
 
 import dlt
@@ -15,7 +15,6 @@ from facebook_business.adobjects.adaccount import AdAccount
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# BỎ primary_key ở đây để tránh áp đặt lên tất cả các bảng
 @dlt.resource(write_disposition="merge")
 def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdown=None):
     FacebookAdsApi.init(access_token=access_token)
@@ -59,15 +58,34 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
                 'fb_clicks': int(raw.get('clicks', 0)),
                 'fb_reach': int(raw.get('reach', 0)),
                 'fb_frequency': float(raw.get('frequency', 0)),
-                'fb_eng_total': int(raw.get('inline_post_engagement', 0))
+                'fb_eng_total': int(raw.get('inline_post_engagement', 0)),
+                'fb_video_3s': 0, 'fb_thruplay': 0, 'fb_eng_granular': 0, 
+                'fb_purchase': 0, 'fb_lead': 0, 'fb_registration': 0
             }
-            # ... (Phần actions giữ nguyên)
+            if 'actions' in raw:
+                for act in raw['actions']:
+                    val = int(act.get('value', 0))
+                    a_type = act.get('action_type')
+                    if a_type == 'video_view': row['fb_video_3s'] = val
+                    elif a_type in ['thruplay', 'video_thruplay_watched_actions']: row['fb_thruplay'] = val
+                    elif a_type in ['post_reaction', 'comment', 'post']: row['fb_eng_granular'] += val
+                    elif a_type == 'purchase': row['fb_purchase'] = val
+                    elif a_type == 'lead': row['fb_lead'] = val
+                    elif a_type == 'complete_registration': row['fb_registration'] = val
             yield row
     except Exception as e:
         logger.error(f"Error for Acc {account_id}: {e}")
 
 def run_backfill():
-    # ĐỔI TÊN PIPELINE ĐỂ XOÁ CACHED STATE (CỰC KỲ QUAN TRỌNG)
+    # --- BẮT BUỘC PHẢI CÓ ĐOẠN NÀY ĐỂ MAPPING CREDENTIALS ---
+    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
+    # Thay thế escape character cho private key
+    p_key = os.environ.get("GCP_PRIVATE_KEY", "")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = p_key.replace("\\n", "\n") if p_key else ""
+    # -------------------------------------------------------
+
     pipeline = dlt.pipeline(
         pipeline_name="meta_v15_final_fix_v2", 
         destination="bigquery", 
@@ -79,23 +97,40 @@ def run_backfill():
     curr_start = date(2025, 1, 1)
     end_point = date.today()
 
-    # Define Primary Keys cho từng loại bảng
-    base_pk = ["date", "fb_ad_id"]
-
     while curr_start <= end_point:
-        s_str = curr_start.strftime('%Y-%m-%d')
-        e_str = (curr_start + relativedelta(months=1) - relativedelta(days=1)).strftime('%Y-%m-%d')
+        curr_end = curr_start + relativedelta(months=1) - relativedelta(days=1)
+        if curr_end > end_point: curr_end = end_point
+        s_str, e_str = curr_start.strftime('%Y-%m-%d'), curr_end.strftime('%Y-%m-%d')
         
         for acc_id in acc_ids:
-            # Luồng 1: Performance (Chỉ cần Date + AdID)
+            logger.info(f"🚀 Processing {acc_id} | {s_str} to {e_str}")
+            
+            # Khóa chính cơ bản
+            base_pk = ["date", "fb_ad_id"]
+
+            # Luồng 1-4: Master, Demo, Platform, Geo
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str), 
                          table_name="fact_fb_performance", primary_key=base_pk)
             
-            # Luồng 7: Device Platform (Cần thêm Device Platform vào PK)
+            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['age', 'gender']), 
+                         table_name="fact_fb_demographic", primary_key=base_pk + ["age", "gender"])
+            
+            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform']), 
+                         table_name="fact_fb_platform", primary_key=base_pk + ["publisher_platform"])
+            
+            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['region']), 
+                         table_name="fact_fb_geographic", primary_key=base_pk + ["region"])
+            
+            # Luồng 5-6: Placement & Device
+            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform', 'platform_position']), 
+                         table_name="fact_fb_placement_detail", primary_key=base_pk + ["publisher_platform", "platform_position"])
+            
+            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['impression_device']), 
+                         table_name="fact_fb_device_detail", primary_key=base_pk + ["impression_device"])
+            
+            # Luồng 7: Device Platform
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['device_platform']), 
                          table_name="fact_fb_device_platform", primary_key=base_pk + ["device_platform"])
-            
-            # ... (Các luồng khác tương tự, ní tự thêm primary_key tương ứng vào pipeline.run)
             
             time.sleep(10)
         curr_start += relativedelta(months=1)
