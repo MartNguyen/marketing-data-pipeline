@@ -1,7 +1,7 @@
 """
-Meta Ads Pipeline v15.1
-Changes: Added Stream 7 (Device Platform) | Explicit Objective Mapping
-Target: Dataset v4 | Location: asia-southeast1
+Meta Ads Pipeline v15.1 - Final Production
+Architecture: 7-Stream Star Schema (Master, Demo, Platform, Geo, Placement, Device, Dev-Platform)
+Standard: Merge Strategy | FB_Objective Included | Location: asia-southeast1
 """
 
 import dlt
@@ -13,6 +13,7 @@ from dateutil.relativedelta import relativedelta
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 
+# Diagnostic Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
     acc = AdAccount(f'act_{str(account_id).replace("act_", "")}')
     
     fields = [
-        "account_id", "campaign_id", "campaign_name", "objective", # Objective nằm đây
+        "account_id", "campaign_id", "campaign_name", "objective",
         "adset_id", "adset_name", "ad_id", "ad_name", 
         "date_start", "spend", "impressions", "clicks", "reach", "frequency",
         "inline_post_engagement", "actions"
@@ -45,19 +46,19 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
             row = {
                 'fb_account_id': raw.get('account_id'),
                 'fb_campaign_name': raw.get('campaign_name'),
-                'fb_objective': raw.get('objective'), # Đây là "Ad Format" theo ý ní
+                'fb_objective': raw.get('objective'),
                 'fb_adset_name': raw.get('adset_name'),
                 'fb_ad_id': raw.get('ad_id'),
                 'fb_ad_name': raw.get('ad_name'),
                 'date': raw.get('date_start'),
-                # Breakdowns
+                # Dimension normalization
                 'age': raw.get('age', 'All'),
                 'gender': raw.get('gender', 'All'),
                 'region': raw.get('region', 'All'),
                 'publisher_platform': raw.get('publisher_platform', 'All'),
                 'platform_position': raw.get('platform_position', 'All'),
                 'impression_device': raw.get('impression_device', 'All'),
-                'device_platform': raw.get('device_platform', 'All'), # Luồng 7
+                'device_platform': raw.get('device_platform', 'All'),
                 # Metrics
                 'fb_spend': round(float(raw.get('spend', 0)), 2),
                 'fb_impressions': int(raw.get('impressions', 0)),
@@ -84,24 +85,21 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
         logger.error(f"Error for Acc {account_id}: {e}")
 
 def run_backfill():
+    # Setup credentials
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
-    
-    p_key = os.environ.get("GCP_PRIVATE_KEY", "")
-    if "\\n" in p_key:
-        p_key = p_key.replace("\\n", "\n")
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = p_key
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
 
     pipeline = dlt.pipeline(
-        pipeline_name="meta_v15_1_backfill", 
+        pipeline_name="meta_ultimate_v15_1", 
         destination="bigquery", 
         dataset_name="fb_ads_master_v4"
     )
     
     acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
     token = os.environ.get("FB_ACCESS_TOKEN")
-    curr_start = date(2025, 1, 1) # Ní có thể chỉnh lại thành date(2026, 4, 1) nếu chỉ muốn chạy bù tháng này
+    curr_start = date(2025, 1, 1) # Full backfill 2025
     end_point = date.today()
 
     while curr_start <= end_point:
@@ -111,20 +109,18 @@ def run_backfill():
         
         for acc_id in acc_ids:
             logger.info(f"🚀 Processing {acc_id} | {s_str} to {e_str}")
-            # Luồng 1-4: Standard
+            # Streams 1-4: Standard Reporting
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str), table_name="fact_fb_performance")
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['age', 'gender']), table_name="fact_fb_demographic")
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform']), table_name="fact_fb_platform")
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['region']), table_name="fact_fb_geographic")
             
-            # Luồng 5-6: Placements & Devices
+            # Streams 5-7: Granular Optimization (Placement, Device, Dev-Platform)
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform', 'platform_position']), table_name="fact_fb_placement_detail")
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['impression_device']), table_name="fact_fb_device_detail")
-            
-            # LUỒNG 7: DEVICE PLATFORM (NEW)
             pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['device_platform']), table_name="fact_fb_device_platform")
             
-            time.sleep(10) 
+            time.sleep(10) # Safe Throttling for User Token
         
         curr_start += relativedelta(months=1)
 
