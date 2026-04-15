@@ -1,142 +1,135 @@
 """
-Module: Meta Ads Backfill Pipeline (v6.2.1 - Ultimate Tiệm Tiến - Fixed)
-Standard: Production Ready - Monthly Gap Strategy (Open-ended)
-Feature: Fan-out Prevention, Auto-Parse Video & Engagement Metrics, Historical Isolation
+Meta Ads Pipeline v15.2 - Patch & Repair
+Focus: Fix Missing Months | Rate Limit Handling | Merge Strategy
+Dataset: fb_ads_master_v4 | Location: asia-southeast1
 """
 
 import dlt
 import os
 import logging
 import time
-from datetime import datetime, date
-from dateutil.relativedelta import relativedelta
+from datetime import date
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
+from facebook_business.exceptions import FacebookRequestError
 
-# Setup Diagnostic Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@dlt.resource(write_disposition="append")
-def fetch_meta_data(account_id, access_token, fields, start_date, end_date, breakdown=None):
-    """Hàm fetch data cốt lõi - Tự bóc tách JSON Actions thành Cột phẳng"""
+@dlt.resource(
+    write_disposition="merge", 
+    primary_key=["date", "fb_ad_id", "age", "gender", "region", "publisher_platform", "platform_position", "impression_device", "device_platform"]
+)
+def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdown=None):
     FacebookAdsApi.init(access_token=access_token)
-    clean_acc_id = str(account_id).replace('act_', '')
-    account = AdAccount(f'act_{clean_acc_id}')
+    acc = AdAccount(f'act_{str(account_id).replace("act_", "")}')
+    
+    fields = [
+        "account_id", "campaign_id", "campaign_name", "objective",
+        "adset_id", "adset_name", "ad_id", "ad_name", 
+        "date_start", "spend", "impressions", "clicks", "reach", "frequency",
+        "inline_post_engagement", "actions"
+    ]
     
     params = {
         'time_range': {'since': start_date, 'until': end_date},
         'level': 'ad',
         'time_increment': 1,
+        'breakdowns': breakdown if breakdown else []
     }
-    if breakdown:
-        params['breakdowns'] = breakdown
 
     try:
-        insights = account.get_insights(fields=fields, params=params)
+        insights = acc.get_insights(fields=fields, params=params)
         for entry in insights:
-            data = dict(entry)
-            data['account_id'] = clean_acc_id
-            
-            # --- XỬ LÝ DATE: Ép về chuẩn BQ DATE ---
-            if 'date_start' in data and data['date_start']:
-                try:
-                    data['date_start'] = datetime.strptime(data['date_start'], '%Y-%m-%d').date()
-                except Exception as e:
-                    logger.warning(f"Lỗi parse date: {data['date_start']} - {e}")
+            raw = dict(entry)
+            row = {
+                'fb_account_id': raw.get('account_id'),
+                'fb_campaign_name': raw.get('campaign_name'),
+                'fb_objective': raw.get('objective'),
+                'fb_adset_name': raw.get('adset_name'),
+                'fb_ad_id': raw.get('ad_id'),
+                'fb_ad_name': raw.get('ad_name'),
+                'date': raw.get('date_start'),
+                'age': raw.get('age', 'All'),
+                'gender': raw.get('gender', 'All'),
+                'region': raw.get('region', 'All'),
+                'publisher_platform': raw.get('publisher_platform', 'All'),
+                'platform_position': raw.get('platform_position', 'All'),
+                'impression_device': raw.get('impression_device', 'All'),
+                'device_platform': raw.get('device_platform', 'All'),
+                'fb_spend': round(float(raw.get('spend', 0)), 2),
+                'fb_impressions': int(raw.get('impressions', 0)),
+                'fb_clicks': int(raw.get('clicks', 0)),
+                'fb_reach': int(raw.get('reach', 0)),
+                'fb_frequency': float(raw.get('frequency', 0)),
+                'fb_eng_total': int(raw.get('inline_post_engagement', 0)),
+                'fb_video_3s': 0, 'fb_thruplay': 0, 'fb_eng_granular': 0, 
+                'fb_purchase': 0, 'fb_lead': 0, 'fb_registration': 0
+            }
+            if 'actions' in raw:
+                for act in raw['actions']:
+                    val = int(act.get('value', 0))
+                    a_type = act.get('action_type')
+                    if a_type == 'video_view': row['fb_video_3s'] = val
+                    elif a_type in ['thruplay', 'video_thruplay_watched_actions']: row['fb_thruplay'] = val
+                    elif a_type in ['post_reaction', 'comment', 'post']: row['fb_eng_granular'] += val
+                    elif a_type == 'purchase': row['fb_purchase'] = val
+                    elif a_type == 'lead': row['fb_lead'] = val
+                    elif a_type == 'complete_registration': row['fb_registration'] = val
+            yield row
+    except FacebookRequestError as e:
+        if e.api_error_code() == 4: # Rate limit
+            logger.warning("🚨 Meta Rate Limit Hit! Sleeping for 120s...")
+            time.sleep(120)
+            # Re-raise to let dlt or the loop handle retry if needed
+        raise e
 
-            # --- XỬ LÝ METRICS: Bóc tách Actions (Chỉ áp dụng cho bảng Master) ---
-            if not breakdown and 'actions' in data:
-                view_3s = 0
-                thruplay = 0
-                custom_eng = 0
-                
-                for act in data['actions']:
-                    act_type = act.get('action_type', '')
-                    val = float(act.get('value', 0))
-                    
-                    if act_type == 'video_view': 
-                        view_3s += val
-                    elif act_type in ['video_thruplay_watched_actions', 'thruplay']:
-                        thruplay += val
-                    elif act_type in ['post_reaction', 'comment', 'post', 'post_engagement']:
-                        custom_eng += val
-                        
-                data['custom_video_view_3s'] = view_3s
-                data['custom_video_thruplay'] = thruplay
-                data['custom_total_engagement'] = custom_eng
-
-            yield data
-            
-    except Exception as e:
-        logger.error(f"❌ Error Acc {account_id} | Breakdown {breakdown} | {start_date}: {e}")
-
-def run_backfill_campaign():
-    # Config GCP & BQ
+def run_patch():
+    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
-    os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1" 
 
     pipeline = dlt.pipeline(
-        pipeline_name="meta_backfill_v6_ultimate", 
+        pipeline_name="meta_v15_patch_fix", 
         destination="bigquery", 
-        dataset_name="fb_ads_ahb1_report_v2"
+        dataset_name="fb_ads_master_v4"
     )
     
     token = os.environ.get("FB_ACCESS_TOKEN")
-    acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
-    
-    fields_master = [
-        "account_id", "campaign_id", "campaign_name", "adset_id", "adset_name", 
-        "ad_id", "ad_name", "date_start", "spend", "impressions", "clicks", "reach",
-        "inline_post_engagement", "actions"
-    ]
-    
-    fields_breakdown = [
-        "account_id", "ad_id", "date_start", "spend", "impressions", "clicks"
+
+    # --- DANH SÁCH CÁC THÁNG BỊ THIẾU CẦN VÁ ---
+    # Cấu trúc: (account_id, start_date, end_date)
+    missing_tasks = [
+        ("587898528769829", "2025-03-01", "2025-03-31"),
+        ("587898528769829", "2025-06-01", "2025-06-30"),
+        ("587898528769829", "2025-10-01", "2025-10-31"),
+        ("874972305237436", "2025-05-01", "2025-05-31")
     ]
 
-    # Vòng lặp Chia Tháng - Tự động quét đến hiện tại
-    start_point = date(2025, 1, 1)
-    end_point = date.today()
+    tables = [
+        ("fact_fb_performance", None),
+        ("fact_fb_demographic", ['age', 'gender']),
+        ("fact_fb_platform", ['publisher_platform']),
+        ("fact_fb_geographic", ['region']),
+        ("fact_fb_placement_detail", ['publisher_platform', 'platform_position']),
+        ("fact_fb_device_detail", ['impression_device']),
+        ("fact_fb_device_platform", ['device_platform'])
+    ]
 
-    current_start = start_point
-
-    while current_start <= end_point:
-        current_end = current_start + relativedelta(months=1) - relativedelta(days=1)
-        if current_end > end_point: 
-            current_end = end_point
-            
-        str_start = current_start.strftime('%Y-%m-%d')
-        str_end = current_end.strftime('%Y-%m-%d')
-        
-        logger.info(f"🚀 --- Đang cày Block Tháng: {str_start} đến {str_end} ---")
-
-        for acc_id in acc_ids:
-            # Luồng 1: Master Data (CÁCH LY VÀO BẢNG BACKFILL) - ĐÃ FIX LỖI ()
-            pipeline.run(
-                fetch_meta_data(acc_id, token, fields_master, str_start, str_end), 
-                table_name="facebook_insights_backfill_historical",
-            )
-            
-            # Luồng 2: Age & Gender
-            pipeline.run(
-                fetch_meta_data(acc_id, token, fields_breakdown, str_start, str_end, ['age', 'gender']), 
-                table_name="insights_age_gender_backfill_historical",
-            )
-            
-            # Luồng 3: Region
-            pipeline.run(
-                fetch_meta_data(acc_id, token, fields_breakdown, str_start, str_end, ['region']), 
-                table_name="insights_region_backfill_historical",
-            )
-            
-            logger.info(f"✅ Xong Acc {acc_id} cho tháng {str_start}")
-            time.sleep(2)
-        
-        current_start += relativedelta(months=1)
-        time.sleep(5)
+    for acc_id, s_str, e_str in missing_tasks:
+        logger.info(f"🛠 Patching {acc_id} | {s_str} to {e_str}")
+        for table_name, breakdown in tables:
+            try:
+                logger.info(f"  --> Loading {table_name}")
+                pipeline.run(
+                    fetch_meta_ultimate(acc_id, token, s_str, e_str, breakdown), 
+                    table_name=table_name
+                )
+                time.sleep(8) # Nghỉ 8s giữa mỗi table để tránh bị vịn
+            except Exception as e:
+                logger.error(f"❌ Failed table {table_name}: {e}")
+                time.sleep(30) # Lỗi thì nghỉ lâu xíu rồi qua table khác
 
 if __name__ == "__main__":
-    run_backfill_campaign()
+    run_patch()
