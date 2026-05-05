@@ -1,8 +1,8 @@
 import dlt
 import os
 import logging
+import time
 from datetime import date
-from concurrent.futures import ThreadPoolExecutor
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 from facebook_business.exceptions import FacebookRequestError
@@ -10,21 +10,20 @@ from facebook_business.exceptions import FacebookRequestError
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# [FIX] Cập nhật lại logic bóc tách VÀ tính tổng như ní yêu cầu
 def fetch_meta_fast_backfill(account_id, access_token, start_date, end_date):
     FacebookAdsApi.init(access_token=access_token)
     acc = AdAccount(f'act_{str(account_id).replace("act_", "")}')
     
     fields = [
         "account_id", "ad_id", "date_start", 
-        "inline_post_engagement", "actions" # Chỉ lấy những cột cần thiết cho việc Backfill
+        "inline_post_engagement", "actions"
     ]
     
     params = {
         'time_range': {'since': start_date, 'until': end_date},
         'level': 'ad',
-        'time_increment': 1, # Vẫn phải để daily để map đúng ngày trong BQ
-        'breakdowns': []     # Bỏ qua breakdown để chạy cực nhanh
+        'time_increment': 1,
+        'breakdowns': [] 
     }
 
     try:
@@ -36,10 +35,7 @@ def fetch_meta_fast_backfill(account_id, access_token, start_date, end_date):
                 'fb_ad_id': raw.get('ad_id'),
                 'date': raw.get('date_start'),
                 
-                # Cột Gốc để đối soát
                 'fb_eng_total': int(raw.get('inline_post_engagement', 0)), 
-                
-                # Khởi tạo mặc định
                 'fb_interaction': 0, 'fb_comment': 0, 'fb_share': 0, 'fb_save': 0,
                 'fb_video_2s': 0, 'fb_video_3s': 0, 'fb_thruplay': 0
             }
@@ -58,33 +54,44 @@ def fetch_meta_fast_backfill(account_id, access_token, start_date, end_date):
 
             yield row
             
-    except Exception as e:
-        logger.error(f"Error on {account_id}: {e}")
+    except FacebookRequestError as e:
+        logger.error(f"FB API Error on {account_id}: {e}")
+        raise e
 
 def run_fast_backfill():
+    # Setup BigQuery Env
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
-    # (Nhớ set thêm GCP_PROJECT_ID, Client Email, Private Key như script cũ)
-    
-    # [QUAN TRỌNG] Trỏ vào đúng Dataset và đổi tên Table để chứa data sửa sai
-    pipeline = dlt.pipeline(pipeline_name="meta_backfill", destination="bigquery", dataset_name="fb_ads_master_v4")
-    token = os.environ.get("FB_ACCESS_TOKEN")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
+    # Thay thế \n thành newline chuẩn cho Private Key
+    private_key = os.environ.get("GCP_PRIVATE_KEY", "")
+    if "\\n" in private_key:
+        private_key = private_key.replace("\\n", "\n")
+    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = private_key
 
-    # Chỉ chạy Backfill cho Account đang chạy năm 2026 và CHỈ lấy 2 tháng gần nhất để siêu nhanh
+    token = os.environ.get("FB_ACCESS_TOKEN")
+    if not token:
+        logger.error("LỖI CHẾT NGƯỜI: Không tìm thấy FB_ACCESS_TOKEN trong biến môi trường!")
+        return
+
+    pipeline = dlt.pipeline(pipeline_name="meta_backfill", destination="bigquery", dataset_name="fb_ads_master_v4")
+    
     ids = ["874972305237436", "779857487799415"] 
     s_str, e_str = '2026-01-01', date.today().strftime('%Y-%m-%d')
     
-    logger.info(f"Bat dau Backfill siêu tốc từ {s_str} den {e_str}...")
+    logger.info(f"Bat dau Backfill từ {s_str} den {e_str}...")
     
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        for acc_id in ids:
-            executor.submit(
-                pipeline.run, 
+    for acc_id in ids:
+        logger.info(f"-> Đang xử lý Account: {acc_id}")
+        try:
+            info = pipeline.run(
                 fetch_meta_fast_backfill(acc_id, token, s_str, e_str), 
-                table_name="temp_fact_fb_backfill", # Bắn vào bảng tạm
-                write_disposition="replace"
+                table_name="temp_fact_fb_backfill",
+                write_disposition="append" 
             )
-            
-    logger.info("Done Backfill! Gio chay Update SQL tren BQ.")
+            logger.info(f"✅ Xong Account {acc_id}. Load info:\n{info}")
+        except Exception as e:
+            logger.error(f"❌ Lỗi khi chạy pipeline cho account {acc_id}: {str(e)}")
 
 if __name__ == "__main__":
     run_fast_backfill()
