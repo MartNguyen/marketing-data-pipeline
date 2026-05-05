@@ -1,37 +1,30 @@
-"""
-Meta Ads Pipeline v15.2 - Credentials & Schema Fixed
-Bản này fix lỗi thiếu Credentials và lỗi Schema BigQuery
-"""
-
 import dlt
 import os
 import logging
-import time
 from datetime import date
-from dateutil.relativedelta import relativedelta
+from concurrent.futures import ThreadPoolExecutor
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
+from facebook_business.exceptions import FacebookRequestError
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@dlt.resource(write_disposition="merge")
-def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdown=None):
+# [FIX] Cập nhật lại logic bóc tách VÀ tính tổng như ní yêu cầu
+def fetch_meta_fast_backfill(account_id, access_token, start_date, end_date):
     FacebookAdsApi.init(access_token=access_token)
     acc = AdAccount(f'act_{str(account_id).replace("act_", "")}')
     
     fields = [
-        "account_id", "campaign_id", "campaign_name", "objective",
-        "adset_id", "adset_name", "ad_id", "ad_name", 
-        "date_start", "spend", "impressions", "clicks", "reach", "frequency",
-        "inline_post_engagement", "actions"
+        "account_id", "ad_id", "date_start", 
+        "inline_post_engagement", "actions" # Chỉ lấy những cột cần thiết cho việc Backfill
     ]
     
     params = {
         'time_range': {'since': start_date, 'until': end_date},
         'level': 'ad',
-        'time_increment': 1,
-        'breakdowns': breakdown if breakdown else []
+        'time_increment': 1, # Vẫn phải để daily để map đúng ngày trong BQ
+        'breakdowns': []     # Bỏ qua breakdown để chạy cực nhanh
     }
 
     try:
@@ -40,100 +33,58 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
             raw = dict(entry)
             row = {
                 'fb_account_id': raw.get('account_id'),
-                'fb_campaign_name': raw.get('campaign_name'),
-                'fb_objective': raw.get('objective'),
-                'fb_adset_name': raw.get('adset_name'),
                 'fb_ad_id': raw.get('ad_id'),
-                'fb_ad_name': raw.get('ad_name'),
                 'date': raw.get('date_start'),
-                'age': raw.get('age', 'All'),
-                'gender': raw.get('gender', 'All'),
-                'region': raw.get('region', 'All'),
-                'publisher_platform': raw.get('publisher_platform', 'All'),
-                'platform_position': raw.get('platform_position', 'All'),
-                'impression_device': raw.get('impression_device', 'All'),
-                'device_platform': raw.get('device_platform', 'All'),
-                'fb_spend': round(float(raw.get('spend', 0)), 2),
-                'fb_impressions': int(raw.get('impressions', 0)),
-                'fb_clicks': int(raw.get('clicks', 0)),
-                'fb_reach': int(raw.get('reach', 0)),
-                'fb_frequency': float(raw.get('frequency', 0)),
-                'fb_eng_total': int(raw.get('inline_post_engagement', 0)),
-                'fb_video_3s': 0, 'fb_thruplay': 0, 'fb_eng_granular': 0, 
-                'fb_purchase': 0, 'fb_lead': 0, 'fb_registration': 0
+                
+                # Cột Gốc để đối soát
+                'fb_eng_total': int(raw.get('inline_post_engagement', 0)), 
+                
+                # Khởi tạo mặc định
+                'fb_interaction': 0, 'fb_comment': 0, 'fb_share': 0, 'fb_save': 0,
+                'fb_video_2s': 0, 'fb_video_3s': 0, 'fb_thruplay': 0
             }
+
             if 'actions' in raw:
                 for act in raw['actions']:
                     val = int(act.get('value', 0))
                     a_type = act.get('action_type')
-                    if a_type == 'video_view': row['fb_video_3s'] = val
+                    if a_type == 'post_reaction': row['fb_interaction'] = val
+                    elif a_type == 'comment': row['fb_comment'] = val
+                    elif a_type == 'post': row['fb_share'] = val
+                    elif a_type == 'onsite_conversion.post_save': row['fb_save'] = val
+                    elif a_type == 'video_view': row['fb_video_3s'] = val
+                    elif a_type == 'video_2_sec_continuous_video_view': row['fb_video_2s'] = val
                     elif a_type in ['thruplay', 'video_thruplay_watched_actions']: row['fb_thruplay'] = val
-                    elif a_type in ['post_reaction', 'comment', 'post']: row['fb_eng_granular'] += val
-                    elif a_type == 'purchase': row['fb_purchase'] = val
-                    elif a_type == 'lead': row['fb_lead'] = val
-                    elif a_type == 'complete_registration': row['fb_registration'] = val
+
             yield row
+            
     except Exception as e:
-        logger.error(f"Error for Acc {account_id}: {e}")
+        logger.error(f"Error on {account_id}: {e}")
 
-def run_backfill():
-    # --- BẮT BUỘC PHẢI CÓ ĐOẠN NÀY ĐỂ MAPPING CREDENTIALS ---
+def run_fast_backfill():
     os.environ["DESTINATION__BIGQUERY__LOCATION"] = "asia-southeast1"
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PROJECT_ID"] = os.environ.get("GCP_PROJECT_ID")
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
-    # Thay thế escape character cho private key
-    p_key = os.environ.get("GCP_PRIVATE_KEY", "")
-    os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = p_key.replace("\\n", "\n") if p_key else ""
-    # -------------------------------------------------------
-
-    pipeline = dlt.pipeline(
-        pipeline_name="meta_v15_final_fix_v2", 
-        destination="bigquery", 
-        dataset_name="fb_ads_master_v4"
-    )
+    # (Nhớ set thêm GCP_PROJECT_ID, Client Email, Private Key như script cũ)
     
-    acc_ids = [a.strip() for a in os.environ.get("FB_ACCOUNT_ID", "").split(",") if a.strip()]
+    # [QUAN TRỌNG] Trỏ vào đúng Dataset và đổi tên Table để chứa data sửa sai
+    pipeline = dlt.pipeline(pipeline_name="meta_backfill", destination="bigquery", dataset_name="fb_ads_master_v4")
     token = os.environ.get("FB_ACCESS_TOKEN")
-    curr_start = date(2025, 1, 1)
-    end_point = date.today()
 
-    while curr_start <= end_point:
-        curr_end = curr_start + relativedelta(months=1) - relativedelta(days=1)
-        if curr_end > end_point: curr_end = end_point
-        s_str, e_str = curr_start.strftime('%Y-%m-%d'), curr_end.strftime('%Y-%m-%d')
-        
-        for acc_id in acc_ids:
-            logger.info(f"🚀 Processing {acc_id} | {s_str} to {e_str}")
+    # Chỉ chạy Backfill cho Account đang chạy năm 2026 và CHỈ lấy 2 tháng gần nhất để siêu nhanh
+    ids = ["874972305237436", "779857487799415"] 
+    s_str, e_str = '2026-01-01', date.today().strftime('%Y-%m-%d')
+    
+    logger.info(f"Bat dau Backfill siêu tốc từ {s_str} den {e_str}...")
+    
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        for acc_id in ids:
+            executor.submit(
+                pipeline.run, 
+                fetch_meta_fast_backfill(acc_id, token, s_str, e_str), 
+                table_name="temp_fact_fb_backfill", # Bắn vào bảng tạm
+                write_disposition="replace"
+            )
             
-            # Khóa chính cơ bản
-            base_pk = ["date", "fb_ad_id"]
-
-            # Luồng 1-4: Master, Demo, Platform, Geo
-            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str), 
-                         table_name="fact_fb_performance", primary_key=base_pk)
-            
-            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['age', 'gender']), 
-                         table_name="fact_fb_demographic", primary_key=base_pk + ["age", "gender"])
-            
-            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform']), 
-                         table_name="fact_fb_platform", primary_key=base_pk + ["publisher_platform"])
-            
-            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['region']), 
-                         table_name="fact_fb_geographic", primary_key=base_pk + ["region"])
-            
-            # Luồng 5-6: Placement & Device
-            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform', 'platform_position']), 
-                         table_name="fact_fb_placement_detail", primary_key=base_pk + ["publisher_platform", "platform_position"])
-            
-            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['impression_device']), 
-                         table_name="fact_fb_device_detail", primary_key=base_pk + ["impression_device"])
-            
-            # Luồng 7: Device Platform
-            pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['device_platform']), 
-                         table_name="fact_fb_device_platform", primary_key=base_pk + ["device_platform"])
-            
-            time.sleep(10)
-        curr_start += relativedelta(months=1)
+    logger.info("Done Backfill! Gio chay Update SQL tren BQ.")
 
 if __name__ == "__main__":
-    run_backfill()
+    run_fast_backfill()
