@@ -104,10 +104,10 @@ def run_pipeline():
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
 
     pipeline = dlt.pipeline(
-    pipeline_name="meta_ultimate_v15_4_refresh", # Đổi tên để dlt clear hoàn toàn checkpoint cũ
-    destination="bigquery", 
-    dataset_name="fb_ads_master_v4"
-)
+        pipeline_name="meta_ultimate_v15_4_refresh",
+        destination="bigquery", 
+        dataset_name="fb_ads_master_v4"
+    )
     token = os.environ.get("FB_ACCESS_TOKEN")
 
     account_groups = {
@@ -115,7 +115,6 @@ def run_pipeline():
         "2026": {"ids": ["874972305237436", "779857487799415"], "start": "2026-01-01", "end": date.today().strftime('%Y-%m-%d')}
     }
 
-    # Chạy tuần tự theo khối tài khoản - Quét full timeline loại bỏ overhead kết nối
     for group_year, config in account_groups.items():
         s_str, e_str = config["start"], config["end"]
         for acc_id in config["ids"]:
