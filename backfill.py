@@ -51,7 +51,11 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
                 'fb_interaction': 0, 'fb_comment': 0, 'fb_share': 0, 'fb_save': 0,
                 'fb_video_2s': 0, 'fb_video_3s': 0, 'fb_thruplay': 0,
                 'fb_video_avg_time': 0, 'fb_video_plays': 0,
-                'fb_purchase': 0, 'fb_lead': 0
+                'fb_purchase': 0, 'fb_lead': 0,
+                # Đắp cứng giá trị 'All' để khớp khít cấu trúc REQUIRED cũ của BigQuery, bảo vệ an toàn data
+                'age': 'All', 'gender': 'All', 'region': 'All', 
+                'publisher_platform': 'All', 'platform_position': 'All', 
+                'impression_device': 'All', 'device_platform': 'All'
             }
 
             if has_breakdown:
@@ -89,6 +93,7 @@ def sync_account_worker(acc_id, token, s_str, e_str, pipeline):
     base_pk = ["date", "fb_ad_id"]
     logger.info(f"⏳ Syncing Account: {acc_id} | Timeline: {s_str} -> {e_str}")
     
+    # Ép cấu hình primary_key bảng phụ khớp để tránh dlt ghi lộn xộn
     pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str), table_name="fact_fb_performance", write_disposition="merge", primary_key=base_pk)
     pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['age', 'gender']), table_name="fact_fb_demographic", write_disposition="merge", primary_key=base_pk + ["age", "gender"])
     pipeline.run(fetch_meta_ultimate(acc_id, token, s_str, e_str, ['publisher_platform']), table_name="fact_fb_platform", write_disposition="merge", primary_key=base_pk + ["publisher_platform"])
@@ -103,6 +108,7 @@ def run_pipeline():
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
 
+    # Giữ nguyên tên pipeline để nó khớp checkpoint cũ, nạp nối tiếp/merge an toàn dữ liệu
     pipeline = dlt.pipeline(
         pipeline_name="meta_ultimate_v15_4_refresh",
         destination="bigquery", 
@@ -111,7 +117,6 @@ def run_pipeline():
     token = os.environ.get("FB_ACCESS_TOKEN")
 
     account_groups = {
-        "2025": {"ids": ["587898528769829"], "start": "2025-01-01", "end": "2025-12-31"},
         "2026": {"ids": ["874972305237436", "779857487799415"], "start": "2026-01-01", "end": date.today().strftime('%Y-%m-%d')}
     }
 
