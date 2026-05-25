@@ -1,23 +1,31 @@
-name: Debug Meta Account Access
+name: Daily Marketing Data Pipeline
 on:
-  workflow_dispatch: # Kích hoạt nút bấm chạy thủ công trên UI GitHub
+
+  workflow_dispatch:
 
 jobs:
-  debug:
+  run_pipeline:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - name: Install Dependencies
+
+      - name: Install dependencies
         run: |
-          pip install facebook_business dlt[bigquery] python-dateutil 
-      
-      - name: Run Debug Script
+          pip install -r requirements.txt
+          pip install dlt[bigquery] facebook_business python-dateutil
+
+      - name: Run Pipeline Script
         env:
-          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }} # Ăn theo Secret Token hiện tại của ní
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+          FB_ACCOUNT_ID: ${{ secrets.FB_ACCOUNT_ID }}
+          GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
+          GCP_PROJECT_ID: "ahb-dltxgg-bigquery"
+          GCP_CLIENT_EMAIL: "dlt-bigquery-pusher@ahb-dltxgg-bigquery.iam.gserviceaccount.com"
         run: python backfill.py
