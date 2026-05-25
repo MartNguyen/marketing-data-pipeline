@@ -41,6 +41,15 @@ def fetch_meta_geo_chunk(account_id, access_token, start_date, end_date):
                 'fb_ad_name': raw.get('ad_name'),
                 'date': raw.get('date_start'),
                 'region': raw.get('region', 'All'),
+                
+                # Bồi thêm 5 trường bắt buộc để khớp hoàn toàn Schema Lock cũ của BigQuery
+                'age': 'All',
+                'gender': 'All',
+                'impression_device': 'All',
+                'platform_position': 'All',
+                'publisher_platform': 'All',
+                'device_platform': 'All',
+
                 'fb_spend': round(float(raw.get('spend', 0)), 2),
                 'fb_impressions': int(raw.get('impressions', 0)),
                 'fb_clicks': int(raw.get('clicks', 0)),
@@ -67,9 +76,8 @@ def fetch_meta_geo_chunk(account_id, access_token, start_date, end_date):
         if e.api_error_code() == 4 or e.api_error_subcode() == 1504022:
             logger.warning(f"🚨 Dính giới hạn Rate Limit! Khóa mạch nghỉ 180s...")
             time.sleep(180)
-            # Thử lại duy nhất 1 lần sau khi nghỉ ngơi dưỡng sức
             insights = acc.get_insights(fields=fields, params=params)
-            # lặp lại yield dữ liệu tương tự nếu cần...
+            # Vòng lặp dự phòng tương tự...
         else:
             raise e
 
@@ -79,13 +87,11 @@ def run_geo_backfill():
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
 
-    pipeline = dlt.pipeline(pipeline_name="meta_geo_v1", destination="bigquery", dataset_name="fb_ads_master_v4")
+    pipeline = dlt.pipeline(pipeline_name="meta_geo_v2", destination="bigquery", dataset_name="fb_ads_master_v4")
     token = os.environ.get("FB_ACCESS_TOKEN")
     
-    # Tập trung xử lý chuẩn xác cho 2 Account của năm 2026
     accounts = ["874972305237436", "779857487799415"]
     
-    # Quy định mốc thời gian băm nhỏ dữ liệu
     start_date = datetime.strptime("2026-01-01", "%Y-%m-%d")
     end_date = datetime.now()
 
@@ -94,7 +100,7 @@ def run_geo_backfill():
         current_start = start_date
         
         while current_start < end_date:
-            current_end = current_start + timedelta(days=7) # Ép cứng băm nhỏ theo từng block 7 ngày
+            current_end = current_start + timedelta(days=7)
             if current_end > end_date:
                 current_end = end_date
                 
@@ -106,10 +112,10 @@ def run_geo_backfill():
                 pipeline.run(
                     fetch_meta_geo_chunk(acc_id, token, s_str, e_str), 
                     table_name="fact_fb_geographic", 
-                    primary_key=["date", "fb_ad_id", "region"],
+                    primary_key=["date", "fb_ad_id", "region", "age", "gender"],
                     write_disposition="merge"
                 )
-                time.sleep(5) # Khoảng nghỉ an toàn giữa các tuần
+                time.sleep(5)
             except Exception as e:
                 logger.error(f"❌ Lỗi tại block {s_str}: {e}. Chờ 60s chuyển block kế tiếp.")
                 time.sleep(60)
