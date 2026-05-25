@@ -103,7 +103,7 @@ def run_pipeline():
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__CLIENT_EMAIL"] = os.environ.get("GCP_CLIENT_EMAIL")
     os.environ["DESTINATION__BIGQUERY__CREDENTIALS__PRIVATE_KEY"] = os.environ.get("GCP_PRIVATE_KEY", "").replace("\\n", "\n")
 
-    pipeline = dlt.pipeline(pipeline_name="meta_ultimate_v15_4", destination="bigquery", dataset_name="fb_ads_master_v4")
+    pipeline = dlt.pipeline(pipeline_name="meta_ultimate_v15_4_refresh", destination="bigquery", dataset_name="fb_ads_master_v4")
     token = os.environ.get("FB_ACCESS_TOKEN")
 
     account_groups = {
