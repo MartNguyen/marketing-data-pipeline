@@ -68,7 +68,9 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
                 'fb_interaction': 0, 'fb_comment': 0, 'fb_share': 0, 'fb_save': 0,
                 'fb_video_2s': 0, 'fb_video_3s': 0, 'fb_thruplay': 0,
                 'fb_video_avg_time': 0, 'fb_video_plays': 0,
-                'fb_purchase': 0, 'fb_lead': 0
+                'fb_purchase': 0, 'fb_lead': 0,
+                # NEW: Result metric đúng của Ads Manager + fix share
+                'fb_result_eng': 0, 'fb_share_fix': 0
             }
 
             # Map Retention Metrics (Avg Time & Plays)
@@ -87,8 +89,11 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
                     # Engagement bóc tách
                     if a_type == 'post_reaction': row['fb_interaction'] = val
                     elif a_type == 'comment': row['fb_comment'] = val
-                    elif a_type == 'post': row['fb_share'] = val
+                    elif a_type == 'post': row['fb_share'] = val          # giữ nguyên (legacy, luôn = 0 vì sai action_type)
+                    elif a_type == 'post.share': row['fb_share_fix'] = val # NEW: share đúng action_type
                     elif a_type == 'onsite_conversion.post_save': row['fb_save'] = val
+                    # NEW: Result đúng của Ads Manager (thay thế inline_post_engagement)
+                    elif a_type == 'post_engagement': row['fb_result_eng'] = val
                     # Video View depth
                     elif a_type == 'video_view': row['fb_video_3s'] = val
                     elif a_type == 'video_2_sec_continuous_video_view': row['fb_video_2s'] = val
@@ -152,3 +157,4 @@ def run_pipeline():
 
 if __name__ == "__main__":
     run_pipeline()
+
