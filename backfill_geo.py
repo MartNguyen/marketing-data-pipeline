@@ -57,7 +57,9 @@ def fetch_meta_geo_chunk(account_id, access_token, start_date, end_date):
                 'fb_frequency': float(raw.get('frequency', 0)),
                 'fb_eng_total': int(raw.get('inline_post_engagement', 0)),
                 'fb_interaction': 0, 'fb_comment': 0, 'fb_share': 0, 'fb_save': 0,
-                'fb_video_3s': 0, 'fb_purchase': 0, 'fb_lead': 0
+                'fb_video_3s': 0, 'fb_purchase': 0, 'fb_lead': 0,
+                # NEW: Result metric đúng của Ads Manager + fix share
+                'fb_result_eng': 0, 'fb_share_fix': 0
             }
 
             if 'actions' in raw:
@@ -67,7 +69,9 @@ def fetch_meta_geo_chunk(account_id, access_token, start_date, end_date):
                     if a_type == 'post_reaction': row['fb_interaction'] = val
                     elif a_type == 'comment': row['fb_comment'] = val
                     elif a_type == 'post': row['fb_share'] = val
+                    elif a_type == 'post.share': row['fb_share_fix'] = val # NEW
                     elif a_type == 'onsite_conversion.post_save': row['fb_save'] = val
+                    elif a_type == 'post_engagement': row['fb_result_eng'] = val # NEW
                     elif a_type == 'video_view': row['fb_video_3s'] = val
                     elif a_type == 'purchase': row['fb_purchase'] = val
                     elif a_type == 'lead': row['fb_lead'] = val
