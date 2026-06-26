@@ -76,7 +76,9 @@ def fetch_meta_ultimate(account_id, access_token, start_date, end_date, breakdow
                     if a_type == 'post_reaction': row['fb_interaction'] = val
                     elif a_type == 'comment': row['fb_comment'] = val
                     elif a_type == 'post': row['fb_share'] = val
+                    elif a_type == 'post.share': row['fb_share_fix'] = val # NEW
                     elif a_type == 'onsite_conversion.post_save': row['fb_save'] = val
+                    elif a_type == 'post_engagement': row['fb_result_eng'] = val # NEW
                     elif a_type == 'video_view': row['fb_video_3s'] = val
                     elif a_type == 'video_2_sec_continuous_video_view': row['fb_video_2s'] = val
                     elif a_type in ['thruplay', 'video_thruplay_watched_actions']: row['fb_thruplay'] = val
