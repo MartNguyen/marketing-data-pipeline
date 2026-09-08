@@ -3,10 +3,37 @@ on:
   schedule:
     - cron: '15 0 * * *'
   workflow_dispatch:
+    inputs:
+      backfill_start:
+        description: 'Catch-up: ngày bắt đầu YYYY-MM-DD (để trống = chạy rolling bình thường)'
+        required: false
+        default: ''
+      backfill_end:
+        description: 'Catch-up: ngày kết thúc YYYY-MM-DD (để trống = hôm nay)'
+        required: false
+        default: ''
+      lookback_days:
+        description: 'Rolling: số ngày gần nhất khi KHÔNG catch-up'
+        required: false
+        default: '7'
+      chunk_days:
+        description: 'Chia dải ngày thành từng đoạn bao nhiêu ngày mỗi request'
+        required: false
+        default: '7'
+      target_tables:
+        description: 'Bảng cần chạy, cách nhau dấu phẩy. Để trống = tất cả. Hợp lệ: performance,demographic,platform,geographic,placement_detail,device_detail,device_platform'
+        required: false
+        default: ''
+      account_ids:
+        description: 'Account id cần chạy, cách nhau dấu phẩy. Để trống = tất cả'
+        required: false
+        default: ''
 
 jobs:
   run_pipeline:
     runs-on: ubuntu-latest
+    # Catch-up dài có thể chạy lâu; mặc định 360 phút của GitHub là quá rộng.
+    timeout-minutes: 240
 
     steps:
       - name: Checkout code
@@ -28,4 +55,13 @@ jobs:
           GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
           GCP_PROJECT_ID: "ahb-dltxgg-bigquery"
           GCP_CLIENT_EMAIL: "dlt-bigquery-pusher@ahb-dltxgg-bigquery.iam.gserviceaccount.com"
+          # Trống hết khi chạy theo cron -> backfill.py rơi về rolling 7 ngày mặc định
+          BACKFILL_START: ${{ inputs.backfill_start }}
+          BACKFILL_END: ${{ inputs.backfill_end }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+          CHUNK_DAYS: ${{ inputs.chunk_days }}
+          TARGET_TABLES: ${{ inputs.target_tables }}
+          FB_ACCOUNT_IDS: ${{ inputs.account_ids }}
+          # Tùy chọn: set secret này thì pipeline fail sẽ bắn thông báo. Không set thì bỏ qua.
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: python backfill.py
